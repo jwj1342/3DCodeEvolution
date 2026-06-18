@@ -3,3 +3,6 @@ slides/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
+
+# 文献 PDF（体积大，可由 paper/index.csv + getPDF.py 复现）
+paper/*.pdf
