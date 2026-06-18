@@ -1,0 +1,5 @@
+# 忽略 slides 子目录
+slides/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
