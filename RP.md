@@ -1,65 +1,145 @@
-# Research Proposal: Towards 3D Code Evolution Tensor (TAC-Graph) for Complex Agentic Software Engineering
+# Research Proposal: Towards a 3D Code Evolution Tensor (TAC-Graph) for Agentic Software Engineering
 
-## 1. Research Motivation (研究动机)
+> 文献库与综述见 `paper/summary.md`（126 篇 arXiv 论文的批判性综述）与 `paper/index.csv`（按视角/类别/贡献类型建立的索引）。本文中的 `[arxiv_id]` 引用均可在该索引中查到。
 
-在当前由大型语言模型（LLMs）驱动的 Agentic Software Engineering（如 "Vibe Coding" 范式）中，Coding Agent 已经展示出处理中小型项目的强大能力。对于简单或中等复杂度的代码库，Agent 能够通过基础的代码读取工具（如文件检索、静态分析）快速构建上下文，并实现高效的代码开发与维护。
+---
 
-然而，**随着系统生命周期的延长，代码库不可避免地走向复杂与冗杂**——模块间交互呈指数级增长，新功能与历史包袱（废弃代码、技术债）深度纠缠。在此阶段，现有的 Coding Agent 在面临复杂的新功能注入或深层 Bug 修复时往往会遭遇瓶颈。其核心痛点在于：**传统的代码表征（如 AST 或单纯的文本序列）是静态且扁平的。** 现有的 Agent 缺乏对代码库演进的宏观全局观（Bigger Picture）**和**微观历史细节（Small Picture）的对齐能力。当 Agent 试图理解复杂系统时，目前的通用做法是依赖繁琐的 Tool Calling（如不断读取散落的文件并拼接上下文），这不仅极易导致 LLM 的 Context Window 爆炸，也无法捕捉代码“为什么被写成这样”的时间线索。
+## Abstract (摘要)
 
-因此，建立一种全新的、能够同时追踪整体代码库在空间（拓扑结构）**与**时间（演进历史）上动态变化的表征方式，是让 Coding Agent 从“初级代码工人”走向“资深系统架构师”的必经之路。
+由 LLM 驱动的 Coding Agent 已能胜任中小规模代码库的开发，但在**大型、长生命周期、技术债深重**的代码库上仍频繁失效：当前 Agent 依赖反复的 Tool Calling 把散落的文件拼接进上下文，既容易撑爆 Context Window，又**只能看到代码"当前是什么样"，看不到它"为什么写成这样"**。其根因在于现有代码表征是**静态且扁平**的——要么是结构快照（AST/检索片段），要么是被随手丢弃的 Agent 动作轨迹，二者与 Git 演进历史彼此割裂。
 
-## 2. Core Concept: 三维代码演进张量 (3D Code Evolution Tensor)
+本提案提出 **TAC-Graph（Temporal-Agentic-Contextual Code Graph）**：一种把代码库建模为三维张量 $\mathcal{T} \in \mathbb{R}^{H \times A \times S}$ 的统一表征，三个轴分别编码 **Git 演进历史（X）**、**Agent 开发轨迹（Y）** 与 **静态代码结构（Z）**。我们设计两种互补的落地形态——显式查询的图 DSL（Form A）与隐式压缩的 Graph-VAE soft-prompt（Form B）——并在 repo-level 代码补全、commit untangling、Agent 轨迹优化等任务上验证：**显式地融合"演进 + 轨迹 + 结构"三轴，能否让 Agent 在复杂代码库上获得可测量的准确率与效率提升**。预期贡献是一个可查询/可压缩的三轴表征、其上的两种集成机制，以及一套对应的评测协议。
 
-为了突破上述瓶颈，本研究提出一种全新的动态拓扑表征框架：**TAC-Graph (Temporal-Agentic-Contextual Code Graph)**。其核心思想是将代码开发建模为一个在三维空间中动态演化的张量结构：
+---
 
-### 2.1 维度的定义 (The Three Axes)
+## 1. Introduction & Research Question (引言与研究问题)
 
-* **X轴（横向/时间维）：Git History (Temporal/Evolutionary)**
-* **包含内容：** Commits, Bug fixes, Features, Diffs, Branches。
-* **物理意义：** 代码的宏观演进历史，代表了系统的“结果”和“里程碑”。
+在大型、长生命周期的代码库上，即使最强的 Coding Agent 也会明显掉链子：在 SWE-bench [2310.06770] 等真实 issue 修复任务中，解决率随仓库规模与跨文件改动的增加而显著下降。长上下文模型（数十万 token）只解决了"读不下"的一半——把更多文件塞进窗口，并不能让 Agent 理解代码"为什么写成这样"。我们认为根因在于 Agent 对代码库的**感知方式过于贫乏**：
 
+* **缺乏宏观演进观（Bigger Picture）。** Agent 看到的是某一时刻的代码快照，无法回答"这段不优雅的代码是为了修哪个历史 Bug 才存在的"。Git 历史中蕴含的因果线索被丢弃。
+* **缺乏微观轨迹记忆（Small Picture）。** Agent 每次任务的思维链、读写/调试试错被执行后即抛弃，下一次重新踩坑；成功与失败的经验无法沉淀为可复用的结构。
+* **三类信息彼此割裂。** 结构（Z）、历史（X）、轨迹（Y）分属不同工具与不同社区，从未被融合为**同一个可被 Agent 查询的对象**。
 
-* **Y轴（纵向/行为维）：Agent Trajectory (Behavioral/Agentic)**
-* **包含内容：** Agent 的 Thought process (思维链), 读写操作 (Read/Write/Search), Bash 执行记录, Debug 试错轨迹。
-* **物理意义：** 代码是如何被写出来的，代表了微观层面开发者的“动作”和“意图”。
+> **核心研究问题 (Primary RQ)：**
+> **能否将代码库的时间演进（Git 历史）、Agent 开发轨迹与静态代码结构融合为单一、可查询且可压缩的表征，使 Coding Agent 在大型、长生命周期代码库上更准确、更高效地完成复杂任务？**
 
+围绕该问题，本提案拆解出三个可验证的子问题：
 
-* **Z轴（深度/空间维）：Code Structure & DSL (Spatial/Semantic)**
-* **包含内容：** 抽象语法树 (AST), 数据流/控制流图 (DFG/CFG), 文件依赖关系, API 调用图。
-* **物理意义：** 代码的静态拓扑和语义关联，代表了系统当前的“状态”和“领域知识”。
+* **RQ1（表征与对齐）：** 如何在统一张量中**对齐三轴间高度不一致的时间粒度**（Agent 动作为秒级、Commit 为天级、结构近似静态），并实现跨维度投影（把 X/Y 的历史注入 Z，得到"带历史记忆的 AST"）？
+* **RQ2（落地形态）：** 显式查询（Form A，类 GraphQL 的图 DSL）与隐式压缩（Form B，Graph-VAE soft-prompt）各自在**哪类任务、哪种上下文预算**下更有效？
+* **RQ3（下游收益）：** 相比只用结构检索的强基线（如 GraphCoder/RepoGraph），**额外引入 X、Y 轴能否带来可测量的提升**，在哪些任务上提升最显著？
 
+---
 
+## 2. Literature Review & Research Gap (文献综述与研究缺口)
 
-## 3. Research Methodology & Tasks (研究方法与下游任务)
+我们对三个学科视角共 126 篇 arXiv 工作做了系统梳理（详见 `paper/summary.md`）。核心结论是：**每一个轴在各自社区内都已相当成熟，轴与轴偶有两两相交，但没有任何工作把三轴融合为一个可供 Coding Agent 查询的统一表征。** 缺口正在于此。
 
-我们可以将代码库的动态状态严格定义为一个张量 $\mathcal{T} \in \mathbb{R}^{H \times A \times S}$，其中 $H, A, S$ 分别代表历史时间、Agent 轨迹和代码空间结构。基于此框架，本研究将探索以下核心方向：
+* **Z 轴（结构）成熟，但只是"按需重建的快照"。** 结构感知编码器（GraphCodeBERT [2009.08366]、图程序表征 [1711.00740]、Devign [1909.03496]）与 repo-level 检索（RepoCoder [2303.12570]、GraphCoder [2406.07003]、DraCo [2405.19782]、RepoHyper [2403.06095]、RepoGraph [2410.14684]）都证明了"结构比扁平文本更有用"。**局限：** 它们在每次查询时临时重建代码结构，丢弃了"这段结构是如何随历史演进、由哪些 Agent 动作产生的"。
 
-### 方向一：维度的变换与信息压缩 (Tensor Transformation & Projection)
+* **Y 轴（轨迹）有数据、有记忆机制，但以任务局部文本存储。** Agent 框架（SWE-agent [2405.15793]、AutoCodeRover [2404.05427]、Agentless [2407.01489]）会产生大量读写/调试轨迹；记忆类工作（Reflexion [2303.11366]、Agent Workflow Memory [2409.07429]、Synapse [2306.07863]、AriGraph [2407.04363]）证明经验可复用。**局限：** 轨迹被当作非结构化文本或任务局部记忆，**未与代码结构和 Git 时间线绑定**，因此无法跨任务、跨版本对齐与检索。
 
-研究如何在新表征下进行张量降维与跨维度投影：
+* **X 轴（演进）有丰富的变更编码与挖掘工作，但与 Agent 行为脱节。** 代码变更表征（CC2Vec [2003.05620]、CCT5 [2305.10785]、MODIT [2108.06645]）、commit untangling（EpiceaUntangler [1502.06757]、细粒度纠缠数据集 [2011.06244]、Atomizer [2601.01233]）已能建模 diff 与提交意图。**局限：** 这些工作把历史当作独立的挖掘对象，**没有把"演进"接入 Agent 的实时开发上下文**。
 
-* **演进与拓扑的融合：** 将 Git History 与 Agent Trajectory 的信息压缩并注入到 Code Structure 中，生成一种“带有历史记忆的 AST”。这使得 Agent 能够原生理解某些“不优雅但为了修复特定历史 Bug 而存在”的祖传代码。
-* **跨粒度信息传输：** 在 Graph Transmission 过程中，探索使用 Temporal Graph Neural Networks (T-GNNs) 或 Graph Transformers。重点解决维度间时间粒度不对齐的挑战（如 Agent 的微观动作是秒级的，而宏观 Commit 是天级的）。
+* **方法学工具已就位，但从未为"代码演进"组装到一起。** 时序图网络（TGAT [2002.07962]、TGN [2006.10637]，以及时间粒度研究 [2311.12255]）天然适合处理 X/Y 的粒度错配；图自编码器与图 SSL（VGAE [1611.07308]、GraphMAE [2205.10803]）可做 Form B 的压缩；soft-prompt / 上下文压缩（Prefix-Tuning [2101.00190]、ICAE [2307.06945]、Gist [2304.08467]、xRAG [2405.13792]）可做注入。**局限：** 没有一项是为代码场景、为三轴融合设计的。
 
-### 方向二：下游任务降维打击 (Task Untangling & Optimization)
+**两两相交而非三轴融合。** 现有工作至多触及两轴：MODIT [2108.06645] 融合提交意图与代码结构（X×Z）；RepoGraph [2410.14684]、LingmaAgent [2406.01422] 让 Agent 搜索接入结构图（Y×Z）；code-city 类可视化 [2204.10006, 2408.08141] 把演进叠加到结构上（X×Z，且面向人而非模型）。
 
-* **Task Untangling (任务解耦)：** 在实际开发中，开发者常将 Bug 修复与新功能开发混杂在一次提交中。通过分析 TAC-Graph（特别是 Agent 意图轨迹与代码空间结构的交集），可以实现高精度的复杂 Git 提交拆分与解耦。
-* **Trajectory Optimization (轨迹剪枝)：** 对比成功的 3D 子图和失败的 3D 子图，提取 Agent 在处理特定缺陷时的高效解决路径，从而指导或剪枝未来 Agent 在高维代码空间中的搜索策略。
+> **Gap：** 没有工作把 **X（演进）+ Y（轨迹）+ Z（结构）** 统一为一个可查询、可压缩的表征，也没有在同一时序图模型中调和三者的粒度错配。**TAC-Graph 针对的正是这个被各社区"分而治之、从未合并"的生态位。**
 
-## 4. System Implementation & Integration Modalities (落地形态与系统集成)
+---
 
-针对如何将庞大的 TAC-Graph 接入并增强 Coding Agent，本研究提出两种互补的落地系统形态：
+## 3. Methodology (方法论)
 
-### 形态 A：显式结构化检索 (Explicit Querying via Graph-QL for Code)
+### 3.1 表征：三维代码演进张量
 
-开发一种基于 TAC-Graph 的领域特定查询语言（DSL，类似于 GraphQL）。
+将代码库的动态状态定义为张量 $\mathcal{T} \in \mathbb{R}^{H \times A \times S}$：
 
-* **机制：** 当 Agent 面对复杂任务时，可以主动调用该查询语言，在 3D 图中精准拉取所需的上下文。
-* **优势：** 可解释性极强。Agent 可以明确执行类似 `Query(Target=AuthModule, History=Past_3_BugFixes, Agent_Trace=Failed_Attempts)` 的操作，精准获取“结构上的邻居”、“历史上的修改者”以及“过去踩过的坑”，将其序列化后作为显式 Prompt 输入，避免无效信息污染 Context。
+| 轴 | 维度 | 内容 | 物理意义 |
+|---|---|---|---|
+| **X** | $H$ 历史/时间 | Commits、Diffs、Bug fixes、Features、Branches | 宏观演进的"结果"与里程碑 |
+| **Y** | $A$ 行为/Agent | 思维链、Read/Write/Search、Bash 执行、Debug 试错 | 代码"如何被写出来"的动作与意图 |
+| **Z** | $S$ 空间/结构 | AST、DFG/CFG、文件依赖、API/调用图 | 当前的静态拓扑与领域语义 |
 
-### 形态 B：隐式表征学习映射 (Implicit Representation via Graph-VAE)
+实现上，三轴统一为一个**异质时序图**：节点为代码实体（文件/函数/符号）及其在不同时刻的版本，边为结构关系（调用/依赖/数据流）、演进关系（commit 修改）、轨迹关系（Agent 触达/编辑）。
 
-针对全量代码库上下文过载的问题，采用表征学习（Representation Learning）的方法将代码库整体“内化”到 Agent 中。
+### 3.2 核心方法
 
-* **机制：** 训练一个图变分自编码器（Graph-VAE）或类似的图表征模型，将庞大且离散的 $\mathcal{T} \in \mathbb{R}^{H \times A \times S}$ 张量映射并压缩为一个低维的连续潜变量空间（Latent Space Embedding）。
-* **优势：** 这种类似“知识蒸馏”的方法使得 Agent 无需通过繁琐的文本读取，即可直接加载对应 codebase 的连续向量特征（Soft Prompts / Prefix Tuning）。这种形态不仅绕过了 LLM Token 窗口的物理限制，还能让 Agent 像人类资深工程师一样，对整个代码库的演进脉络产生直觉性（Intuitive）的深层理解。
+* **跨维投影与"带历史记忆的 AST"（对应 RQ1）。** 将 X、Y 的信息压缩并注入 Z，使 Agent 能原生理解"为修特定历史 Bug 而存在的祖传代码"。借鉴变更编码（MODIT [2108.06645]、CCT5 [2305.10785]）作为 X 轴节点编码器，结构编码沿用图程序表征 [1711.00740]/Devign [1909.03496] 的多关系 GNN。
+* **跨粒度时序传播（对应 RQ1）。** 用 Temporal GNN / Graph Transformer 在异质时序图上传播信息，重点解决秒级（Agent 动作）与天级（Commit）的粒度错配——以 TGAT [2002.07962] 的连续时间编码把不同时间尺度的事件放到同一时间流形上，以 TGN [2006.10637] 的 memory 模块维护逐节点演进状态；时间粒度选择参考 [2311.12255]。
+* **形态 A — 显式图查询 DSL（对应 RQ2）。** 提供类 GraphQL 的查询语言，让 Agent 主动执行如 `Query(Target=AuthModule, History=Past_3_BugFixes, Agent_Trace=Failed_Attempts)`，精准拉取"结构邻居 / 历史修改者 / 过去踩过的坑"，序列化为显式 Prompt。该形态的可解释性强，且与选择性/图检索（Repoformer [2403.10059]、GraphCoder [2406.07003]、RepoGraph [2410.14684]）一脉相承。
+* **形态 B — 隐式 Graph-VAE soft-prompt（对应 RQ2）。** 训练图变分自编码器（VGAE [1611.07308] / GraphMAE [2205.10803] 系）把整个张量压缩为低维潜变量，经 Prefix-Tuning [2101.00190] / ICAE [2307.06945] 风格的桥接注入冻结的 Coding Agent，绕过 Token 窗口物理限制。
+
+### 3.3 下游任务与实验设计（对应 RQ3）
+
+我们将在以下任务上验证表征的增益（完整的任务/基准/指标/基线清单见 `paper/summary.md`）：
+
+| 任务 | 主用轴 | 评测基准 | 指标 | 代表性基线 |
+|---|---|---|---|---|
+| **T1 Repo-level 补全**（先导、低风险） | Z (+X/Y 增量) | CrossCodeEval [2310.11248]、RepoBench [2306.03091] | EM / 标识符-F1、Recall@k | GraphCoder [2406.07003]、DraCo [2405.19782]、RepoHyper [2403.06095] |
+| **T2 Issue→Patch 解决** | Y×Z | SWE-bench [2310.06770] | Resolved-rate、pass@1、成本 | SWE-agent [2405.15793]、Agentless [2407.01489]、RepoGraph [2410.14684] |
+| **T3 Commit Untangling**（提案主打） | X | 细粒度纠缠数据集 [2011.06244]、EpiceaUntangler [1502.06757] | 多标签 concern-F1、分离率 | Atomizer [2601.01233]、LLM 检测 [2505.08263] |
+| **T4 轨迹优化/剪枝**（提案主打） | Y | 自建 + AgentBench [2308.03688] 失败模式 | 成功率、步数/成本下降 | Reflexion [2303.11366]、AWM [2409.07429] |
+
+**核心消融：** 在 T1 上以同一张图为底座，对比"仅 Z 轴"与"Z+X / Z+Y / Z+X+Y"，**直接量化每个轴的边际贡献**——这是检验本提案核心猜想的最干净实验。
+
+---
+
+## 4. Preliminary Results & Feasibility (初步结果与可行性)
+
+> **可行性策略。** 本提案的核心猜想——"显式融合三轴能带来可测量的增益"——将通过一组**最小可行性实验**优先验证。截至本提案撰写时尚无实测结果；下列为第一阶段（见 §7 P1–P2）将优先完成的去风险实验，每项标注"若成立可证明什么"。完成后将以真实图表替换对应占位条目，且不在此填入任何未实测的数字。
+
+* **[ ] 三轴图可构建。** 在 1–3 个真实仓库上，从 Git 历史 + 一段 Agent 轨迹 + 静态分析构建出异质时序图，并给出规模统计（节点/边/版本数）。*若成立 → 数据管线可行，三轴确实能被统一为同一个可查询对象。*
+* **[ ] 单/双轴基线可复现。** 复现一个 Z 轴检索基线（如 GraphCoder/DraCo）在 CrossCodeEval 子集上的分数，作为后续逐轴消融的对照锚点。*若成立 → 评测闭环可行，消融有可信参照。*
+* **[ ] 核心猜想出现初步信号（关键实验）。** 在小规模子集上测量"Z+X 或 Z+Y"相对"仅 Z"的 EM/标识符-F1 变化（哪怕小幅、单语言、单仓库）。*若成立 → 这是最直接支撑 RQ3 的证据；若不成立 → 亦是有价值的负面结论，将研究问题收敛到"在何种条件下加轴才有益"。*
+* **[ ] Form A 查询可用。** 给出 1–2 个真实的 `Query(...)` 调用及其返回的上下文片段，定性对比其相对朴素文件检索的精准度。*若成立 → 显式形态的接口与可解释性得到验证。*
+
+**本节所依赖、需诚实交代的前提假设：**（a）可获取的高质量 Agent 轨迹数据有限——真实轨迹稀缺，初期可能需用合成/回放轨迹替代；（b）Git 历史与代码结构能被可靠对齐；（c）受算力限制，初步实验仅覆盖小规模子集，结论尚不可外推为普适。
+
+---
+
+## 5. Success Criteria (成功标准)
+
+项目结束时，满足以下任一组即视为达成对应层级的成功（指标为待验证的**目标假设**，非承诺）：
+
+* **表征层（必达）：** 交付可复现的三轴图构建管线与 Form A/B 两种集成原型，并在 T1 上完成"逐轴消融"实验，**清晰量化** X、Y 轴各自的边际贡献（无论正负，都是有价值的结论）。
+* **任务层（进阶）：** 在 T1（CrossCodeEval/RepoBench）上，"Z+X+Y" 相对最强 Z-only 基线在 EM 或标识符-F1 上取得**统计显著**的提升；或在 T3（untangling）多标签 concern-F1 上超过现有 SOTA。
+* **机制层（探索）：** 给出 Form A 与 Form B 适用边界的实证刻画（如：长上下文/可解释场景 A 占优，强 Token 预算约束下 B 占优）。
+
+---
+
+## 6. Risks & Mitigation (风险与备用方案 / Plan B)
+
+| 风险 | 说明 | 备用方案 (Plan B) |
+|---|---|---|
+| **Y 轴数据稀缺** | 公开的高质量 Agent 轨迹有限 | 用 SWE-Gym/SWE-agent 回放与合成轨迹起步；先在"X+Z"双轴验证主猜想，Y 轴作为增量模块 |
+| **时间粒度错配难调和** | 秒级动作 vs 天级 commit 难以联合建模 | 退化为分层/多分辨率方案：先各轴独立编码再后融合（参考 [2311.12255] 的粒度选择结论） |
+| **Form B 训练/算力开销大** | Graph-VAE + soft-prompt 端到端训练昂贵 | 优先交付 Form A（无需训练、可解释），Form B 作为可选研究分支；用上下文压缩（Gist/ICAE）作轻量替代 |
+| **三轴融合反而引入噪声** | 加轴未必带来增益 | 消融实验本身即结果；若融合无益，则贡献变为"在何种条件下融合有效"的实证刻画 |
+| **评测缺乏现成"三轴"基准** | 没有直接对标的数据集 | 复用单/双轴基准并自建小规模标注子集；明确声明评测边界 |
+
+---
+
+## 7. Timeline & Milestones (时间规划与里程碑)
+
+> ⚠️ **脚手架：请按你的项目实际周期（学期/资助期）调整时长。** 下表以阶段而非绝对月份给出。
+
+| 阶段 | 里程碑 (Milestone) | 主要产出 |
+|---|---|---|
+| **P1 基础设施** | 三轴异质时序图构建管线跑通（1–3 仓库） | 数据管线 + 规模统计；复现 1 个 Z-only 基线 |
+| **P2 核心方法** | 跨维投影 + 时序传播原型 | "带历史记忆的 AST"编码器；T1 逐轴消融初步结果 |
+| **P3 落地形态** | Form A（DSL）可用、Form B（Graph-VAE）原型 | 查询样例 + 压缩-注入流水线 |
+| **P4 评测与扩展** | T1 完整评测 + T3/T4 之一 | 主任务结果表、消融、Form A/B 适用边界 |
+| **P5 收尾** | 论文/系统打包 | 复现包、文档、Limitations 总结 |
+
+---
+
+## 8. Limitations & Scope (边界与局限)
+
+本提案以**表征与集成机制**为核心，不追求在所有任务上全面超越；初期实验受限于轨迹数据与算力，结论以小规模、特定语言/仓库为主，外推需谨慎。Form B 的端到端有效性高度依赖训练资源，存在被降级为 Form A + 轻量压缩的可能。我们将以可复现性与诚实的消融，替代对"彻底解决复杂代码理解"的过度承诺。
+
+---
+
+### References (参考文献)
+
+完整的 126 篇文献综述、分类与逐篇贡献标注见 **`paper/summary.md`** 与 **`paper/index.csv`**；本文 `[arxiv_id]` 形式的引用可在该 CSV 中按 `arxiv_id` 列检索到题录与 PDF。
