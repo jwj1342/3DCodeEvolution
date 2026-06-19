@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -25,6 +26,9 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(HERE, "index.csv")
 ARXIV_PDF = "https://arxiv.org/pdf/{id}"
+# index.csv also holds non-arXiv code-intelligence-infra refs whose first column is a
+# short key (e.g. "CodeQL", "CPG"); only rows matching a real arXiv id are downloadable.
+ARXIV_RE = re.compile(r"^\d{4}\.\d{4,5}$")
 HEADERS = {"User-Agent": "Mozilla/5.0 (TAC-Graph litreview getPDF.py)"}
 
 
@@ -65,9 +69,14 @@ def main() -> int:
 
     rows = load_rows()
     print(f"{len(rows)} papers in index.csv")
-    ok = skipped = failed = 0
+    ok = skipped = failed = nonarxiv = 0
     for row in rows:
         arxiv_id = row["arxiv_id"].strip()
+        if not ARXIV_RE.match(arxiv_id):
+            nonarxiv += 1
+            if args.list:
+                print(f"  (skip non-arXiv key) {arxiv_id}")
+            continue
         dest = os.path.join(HERE, target_name(row))
         if args.list:
             print(f"  {arxiv_id} -> {os.path.basename(dest)}")
@@ -82,7 +91,7 @@ def main() -> int:
             failed += 1
         time.sleep(1)  # be polite to arXiv
     if not args.list:
-        print(f"\ndone: {ok} downloaded, {skipped} already present, {failed} failed")
+        print(f"\ndone: {ok} downloaded, {skipped} already present, {failed} failed, {nonarxiv} non-arXiv skipped")
     return 1 if failed else 0
 
 

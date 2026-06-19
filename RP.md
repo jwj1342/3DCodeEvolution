@@ -1,14 +1,14 @@
 # Research Proposal: Towards a 3D Code Evolution Tensor (TAC-Graph) for Agentic Software Engineering
 
-> 文献库与综述见 `paper/summary.md`（126 篇 arXiv 论文的批判性综述）与 `paper/index.csv`（按视角/类别/贡献类型建立的索引）。本文中的 `[arxiv_id]` 引用均可在该索引中查到。
+> 文献库与综述见 `paper/summary.md`（126 篇 arXiv 论文的批判性综述，另含「代码智能 / 静态分析基础设施」一类共 13 篇参考——其中 4 篇 arXiv + 9 个非 arXiv 工具与规范）与 `paper/index.csv`（按视角/类别/贡献类型建立的索引）。本文中 `[arxiv_id]` 形式的引用、以及代码智能基础设施类的方括号短键（如 [CodeQL]、[CPG]、[Kythe]、[Glean]、[SCIP]、[GumTree]、[tree-sitter]、[Doop] 等）均可在该索引中查到。
 
 ---
 
 ## Abstract (摘要)
 
-由 LLM 驱动的 Coding Agent 已能胜任中小规模代码库的开发，但在**大型、长生命周期、技术债深重**的代码库上仍频繁失效：当前 Agent 依赖反复的 Tool Calling 把散落的文件拼接进上下文，既容易撑爆 Context Window，又**只能看到代码"当前是什么样"，看不到它"为什么写成这样"**。其根因在于现有代码表征是**静态且扁平**的——要么是结构快照（AST/检索片段），要么是被随手丢弃的 Agent 动作轨迹，二者与 Git 演进历史彼此割裂。
+由 LLM 驱动的 Coding Agent 已能胜任中小规模代码库的开发，但在**大型、长生命周期、技术债深重**的代码库上仍频繁失效：当前 Agent 依赖反复的 Tool Calling 把散落的文件拼接进上下文，既容易撑爆 Context Window，又**只能看到代码"当前是什么样"，看不到它"为什么写成这样"**。其根因在于现有代码表征**按快照孤立存在**——要么是每次查询临时重建的结构（AST/检索片段，乃至 CodeQL/CPG 这类显式代码图也是逐版本重建），要么是被随手丢弃的 Agent 动作轨迹，二者既无统一的时间轴、也未与 Git 演进历史绑定。
 
-本提案提出 **TAC-Graph（Temporal-Agentic-Contextual Code Graph）**：一种把代码库建模为三维张量 $\mathcal{T} \in \mathbb{R}^{H \times A \times S}$ 的统一表征，三个轴分别编码 **Git 演进历史（X）**、**Agent 开发轨迹（Y）** 与 **静态代码结构（Z）**。我们设计两种互补的落地形态——显式查询的图 DSL（Form A）与隐式压缩的 Graph-VAE soft-prompt（Form B）——并在 repo-level 代码补全、commit untangling、Agent 轨迹优化等任务上验证：**显式地融合"演进 + 轨迹 + 结构"三轴，能否让 Agent 在复杂代码库上获得可测量的准确率与效率提升**。预期贡献是一个可查询/可压缩的三轴表征、其上的两种集成机制，以及一套对应的评测协议。
+本提案提出 **TAC-Graph（Temporal-Agentic-Contextual Code Graph）**：一种把代码库建模为三维张量 $\mathcal{T} \in \mathbb{R}^{H \times A \times S}$ 的统一表征，三个轴分别编码 **Git 演进历史（X）**、**Agent 开发轨迹（Y）** 与 **静态代码结构（Z）**。其显式形态是一张**版本化（双时态）带标签属性图**，承袭代码智能 / 静态分析基础设施（CodeQL、Code Property Graph、Kythe、Glean 等）"代码即可查询对象"的谱系，并在其上补齐时间轴与 Agent 轴。我们设计两种互补的落地形态——显式查询的声明式图 DSL（Form A，CodeQL/CPGQL/Datalog 一脉）与隐式压缩的 Graph-VAE soft-prompt（Form B）——并在 repo-level 代码补全、commit untangling、Agent 轨迹优化等任务上验证：**显式地融合"演进 + 轨迹 + 结构"三轴，能否让 Agent 在复杂代码库上获得可测量的准确率与效率提升**。预期贡献是一个可查询/可压缩的三轴表征、其上的两种集成机制，以及一套对应的评测协议。
 
 ---
 
@@ -26,16 +26,18 @@
 围绕该问题，本提案拆解出三个可验证的子问题：
 
 * **RQ1（表征与对齐）：** 如何在统一张量中**对齐三轴间高度不一致的时间粒度**（Agent 动作为秒级、Commit 为天级、结构近似静态），并实现跨维度投影（把 X/Y 的历史注入 Z，得到"带历史记忆的 AST"）？
-* **RQ2（落地形态）：** 显式查询（Form A，类 GraphQL 的图 DSL）与隐式压缩（Form B，Graph-VAE soft-prompt）各自在**哪类任务、哪种上下文预算**下更有效？
+* **RQ2（落地形态）：** 显式查询（Form A，架在版本化图上的声明式查询 DSL，CodeQL/CPGQL/Datalog 一脉）与隐式压缩（Form B，Graph-VAE soft-prompt）各自在**哪类任务、哪种上下文预算**下更有效？
 * **RQ3（下游收益）：** 相比只用结构检索的强基线（如 GraphCoder/RepoGraph），**额外引入 X、Y 轴能否带来可测量的提升**，在哪些任务上提升最显著？
 
 ---
 
 ## 2. Literature Review & Research Gap (文献综述与研究缺口)
 
-我们对三个学科视角共 126 篇 arXiv 工作做了系统梳理（详见 `paper/summary.md`）。核心结论是：**每一个轴在各自社区内都已相当成熟，轴与轴偶有两两相交，但没有任何工作把三轴融合为一个可供 Coding Agent 查询的统一表征。** 缺口正在于此。
+我们对三个学科视角共 126 篇 arXiv 工作、外加一类**代码智能 / 静态分析基础设施**（13 篇，见下）做了系统梳理（详见 `paper/summary.md`）。核心结论是：**每一个轴在各自社区内都已相当成熟，轴与轴偶有两两相交，但没有任何工作把三轴融合为一个可供 Coding Agent 查询的统一表征。** 缺口正在于此。
 
-* **Z 轴（结构）成熟，但只是"按需重建的快照"。** 结构感知编码器（GraphCodeBERT [2009.08366]、图程序表征 [1711.00740]、Devign [1909.03496]）与 repo-level 检索（RepoCoder [2303.12570]、GraphCoder [2406.07003]、DraCo [2405.19782]、RepoHyper [2403.06095]、RepoGraph [2410.14684]）都证明了"结构比扁平文本更有用"。**局限：** 它们在每次查询时临时重建代码结构，丢弃了"这段结构是如何随历史演进、由哪些 Agent 动作产生的"。
+* **Z 轴（结构）成熟，但只是"按需重建的快照"。** 结构感知编码器（GraphCodeBERT [2009.08366]、图程序表征 [1711.00740]、Devign [1909.03496]）与 repo-level 检索（RepoCoder [2303.12570]、GraphCoder [2406.07003]、DraCo [2405.19782]、RepoHyper [2403.06095]、RepoGraph [2410.14684]）都证明了"结构比扁平文本更有用"。**局限：** 它们在每次查询时临时重建代码结构，丢弃了"这段结构是如何随历史演进、由哪些 Agent 动作产生的"；而即便是显式表征代码结构的代码智能系统（见下条），也同样是 per-snapshot 的——逐版本重建，没有时间轴与 Agent 轴。
+
+* **显式表征代码库（无 ML）的真正先验——代码智能 / 静态分析基础设施，却被纯 ML 语料遗漏。** "把整个代码库显式建成一个可查询对象、不用任何编码器"这件事，成熟工作不在机器学习社区，而在代码智能一脉：CodeQL [CodeQL]（代码即关系数据库 + Datalog 语义的 QL）、Code Property Graph / Joern [CPG]（AST+CFG+PDG 合一的带标签属性图 + CPGQL，近期 LLMxCPG [2507.16585] 仍以其切片喂模型）、Kythe [Kythe]（语言无关的跨引用图模式）、Glean [Glean]（模式定义、append-only 的事实库 + Angle 查询语言）、SCIP/LSIF [SCIP]（序列化的代码导航索引）、stack-graphs [2211.01224]（增量名字解析）、tree-sitter [tree-sitter]（增量多语言 CST 解析）、GumTree [GumTree]（细粒度 AST 差分 + MOVE 检测，可跨版本追踪代码元素）、Doop [Doop]（Datalog 程序分析）。**局限：** 它们清一色 **per-snapshot**——每个版本一个库 / 一次重建，既无时间轴也无 Agent 轴；这正是本提案 Form A 要继承其查询语义、又要在其上补齐的两个维度。
 
 * **Y 轴（轨迹）有数据、有记忆机制，但以任务局部文本存储。** Agent 框架（SWE-agent [2405.15793]、AutoCodeRover [2404.05427]、Agentless [2407.01489]）会产生大量读写/调试轨迹；记忆类工作（Reflexion [2303.11366]、Agent Workflow Memory [2409.07429]、Synapse [2306.07863]、AriGraph [2407.04363]）证明经验可复用。**局限：** 轨迹被当作非结构化文本或任务局部记忆，**未与代码结构和 Git 时间线绑定**，因此无法跨任务、跨版本对齐与检索。
 
@@ -45,7 +47,7 @@
 
 **两两相交而非三轴融合。** 现有工作至多触及两轴：MODIT [2108.06645] 融合提交意图与代码结构（X×Z）；RepoGraph [2410.14684]、LingmaAgent [2406.01422] 让 Agent 搜索接入结构图（Y×Z）；code-city 类可视化 [2204.10006, 2408.08141] 把演进叠加到结构上（X×Z，且面向人而非模型）。
 
-> **Gap：** 没有工作把 **X（演进）+ Y（轨迹）+ Z（结构）** 统一为一个可查询、可压缩的表征，也没有在同一时序图模型中调和三者的粒度错配。**TAC-Graph 针对的正是这个被各社区"分而治之、从未合并"的生态位。**
+> **Gap：** 没有工作把 **X（演进）+ Y（轨迹）+ Z（结构）** 统一为一个可查询、可压缩的表征，也没有在同一时序图模型中调和三者的粒度错配。尤其是：代码智能 / 静态分析一脉（CodeQL [CodeQL]、CPG/Joern [CPG]、Kythe [Kythe]、Glean [Glean]、SCIP [SCIP]、stack-graphs [2211.01224]、Doop [Doop]）已经把代码结构显式建成可查询对象，却**清一色按快照、逐版本重建**，从未把这样一张图升级为**版本化（双时态）**并接入 **Agent 轴**——Glean [Glean] 的 append-only 事实模型是最接近的先例，但仍缺持久符号身份与有效区间。**TAC-Graph 针对的正是这个被各社区"分而治之、从未合并"的生态位：把一张版本化代码智能图与 Agent 轴融为一体。**
 
 ---
 
@@ -61,13 +63,34 @@
 | **Y** | $A$ 行为/Agent | 思维链、Read/Write/Search、Bash 执行、Debug 试错 | 代码"如何被写出来"的动作与意图 |
 | **Z** | $S$ 空间/结构 | AST、DFG/CFG、文件依赖、API/调用图 | 当前的静态拓扑与领域语义 |
 
-实现上，三轴统一为一个**异质时序图**：节点为代码实体（文件/函数/符号）及其在不同时刻的版本，边为结构关系（调用/依赖/数据流）、演进关系（commit 修改）、轨迹关系（Agent 触达/编辑）。
+张量只是逻辑视图；其物理底座是一个**显式、可查询的版本化（双时态，bitemporal）带标签属性图（Labeled Property Graph, LPG；下文亦称"异质时序图"）**。这里要强调的是 **Form A 一侧纯粹关于"如何把整个代码库显式表征为一个可查询对象"——不涉及任何编码器、不涉及任何模型**。该取向的正确先验并不在 ML 文献里，而在**代码智能 / 静态分析基础设施**这一脉（CodeQL [CodeQL]、Code Property Graph / Joern [CPG]、Kythe [Kythe]、Glean [Glean]、SCIP/LSIF [SCIP]、stack-graphs [2211.01224]、tree-sitter [tree-sitter]、GumTree [GumTree]、Doop [Doop]），它们把代码库当作"数据库"而非"待编码的文本"。我们沿着这条谱系做出三个显式表征的设计决定。
+
+**(a) 数据模型：LPG 而非 RDF。** 三个轴本质上是**架在同一组共享节点上的三类带类型边集**，且**每条边都必须挂载属性**（commit hash、timestamp、agent-id、validity interval 等）。LPG 原生支持"边带属性"，而 RDF 三元组要让边携带元数据须做痛苦的 reification（具体化），故选 LPG。这与把整个 Maven 生态显式建成可查询属性图、并强调依赖关系"不建成一等边就无法查询"的做法 [1901.05392] 同理。
+
+**(b) 模式 / 本体：CPG 内层 + Kythe/SCIP 跨文件层。** 由 tree-sitter [tree-sitter] 增量解析出每语言的 CST 作为最底层；在函数内层采用 CPG [CPG] 风格的 AST+CFG+PDG 合并图；其上再叠一层 Kythe [Kythe] / SCIP [SCIP] / stack-graphs [2211.01224] 式的**跨文件符号解析（name resolution）**模式，把引用解析到定义。节点分三层 **file ⊃ function ⊃ statement**，层间以 `CONTAINS` 边相连。
+
+**(c) 粒度：函数 / 符号级，作为三轴的"最小公倍数"。** commit 改的是 hunk→落到函数；agent 读/写的是文件 / 函数；结构可分解到函数。文件级太粗（无法定位 commit/agent 触达的具体单元），token 级又**无法跨版本被稳定追踪**。故以函数 / 符号级作为三轴对齐的公共粒度。
+
+**核心新颖性——把"按快照"升级为"版本化（双时态）"。** 上述代码智能系统**绝大多数是 per-snapshot 的：每个 commit 重建一次索引、每个版本一个库**（CodeQL / Joern / Kythe / SCIP 皆然，[2210.08316] 的调用图演化分析亦是"逐版本建图再跨序列挖掘"）；即便是增量的 stack-graphs [2211.01224] 与 append-only 的 Glean [Glean]，也仍缺少**跨版本的持久符号身份与有效区间**。TAC-Graph 的本质区别是把整段历史塌缩进**单一版本化 LPG**：
+
+* 每个节点带一个**持久符号 ID（persistent symbol-ID）**，跨 commit 的同一符号靠 GumTree [GumTree] 式细粒度 AST 匹配（含 MOVE 检测）缝合，从而在重命名 / 移动 / 重构后仍是"同一个"节点；
+* 每个节点 / 边携带**有效区间 $[commit\_in, commit\_out)$**；某一快照即 `valid_at(commit)` 的切片——由此 CodeQL/Kythe 式的"单快照视图"成为本表征的一个投影；
+* **X 轴 = 演进边（evolution edges）**：连接同一符号 ID 的相邻版本；**Y 轴 = agentic 边**：从 agent 动作指向具体的节点版本（read/edit）。
+
+由于函数会被新增 / 拆分 / 合并 / 删除，**节点集本身随时间变化**——这是一个节点集可变的动态图，需要 EvolveGCN [1902.10191] 式"演化 GNN 参数"的机制来吸收结构"生死"，而持久节点的逐节点演进状态仍可沿用 TGN [2006.10637] 式 memory（详见 §3.2）；GumTree 的 diff 恰好是检测这些结构"生死"的机制。Glean [Glean] 的 append-only fact 模型是这一版本化思路在现有工作中最接近的先例，但它仍是按快照累积事实、并无跨版本的持久符号身份与有效区间。
+
+> **紧凑模式速写。**
+> 节点层：`File ⊃ Function ⊃ Statement`（`CONTAINS`）；每个节点 = `(symbol_id, version)`，属性含 `[commit_in, commit_out)`。
+> 边类型：`Z`-结构边 `{CALLS, IMPORTS, DATAFLOW, AST_CHILD}`；`X`-演进边 `EVOLVES_TO`（同 `symbol_id` 跨版本）；`Y`-agentic 边 `{READ, EDIT}`（agent 动作 → 节点版本）。
+> 三轴 = 共享版本化节点之上的三类带类型、带属性边集。
+
+> **工程现实。** 切忌对成千上万个 commit 各自从头重建索引。tree-sitter [tree-sitter]（增量解析）与 stack-graphs [2211.01224]（文件级增量名字解析——每个文件产出独立子图）天生为增量更新而设计；故采用**增量解析 + 增量名字解析 + 增量（delta）存储**，沿 X 轴历史**物化（materialize）**这张版本化图，而非逐版本全量重建。
 
 ### 3.2 核心方法
 
 * **跨维投影与"带历史记忆的 AST"（对应 RQ1）。** 将 X、Y 的信息压缩并注入 Z，使 Agent 能原生理解"为修特定历史 Bug 而存在的祖传代码"。借鉴变更编码（MODIT [2108.06645]、CCT5 [2305.10785]）作为 X 轴节点编码器，结构编码沿用图程序表征 [1711.00740]/Devign [1909.03496] 的多关系 GNN。
-* **跨粒度时序传播（对应 RQ1）。** 用 Temporal GNN / Graph Transformer 在异质时序图上传播信息，重点解决秒级（Agent 动作）与天级（Commit）的粒度错配——以 TGAT [2002.07962] 的连续时间编码把不同时间尺度的事件放到同一时间流形上，以 TGN [2006.10637] 的 memory 模块维护逐节点演进状态；时间粒度选择参考 [2311.12255]。
-* **形态 A — 显式图查询 DSL（对应 RQ2）。** 提供类 GraphQL 的查询语言，让 Agent 主动执行如 `Query(Target=AuthModule, History=Past_3_BugFixes, Agent_Trace=Failed_Attempts)`，精准拉取"结构邻居 / 历史修改者 / 过去踩过的坑"，序列化为显式 Prompt。该形态的可解释性强，且与选择性/图检索（Repoformer [2403.10059]、GraphCoder [2406.07003]、RepoGraph [2410.14684]）一脉相承。
+* **跨粒度时序传播（对应 RQ1）。** 用 Temporal GNN / Graph Transformer 在异质时序图上传播信息，重点解决秒级（Agent 动作）与天级（Commit）的粒度错配——以 TGAT [2002.07962] 的连续时间编码把不同时间尺度的事件放到同一时间流形上，以 TGN [2006.10637] 的 memory 模块维护持久节点的逐节点演进状态，并以 EvolveGCN [1902.10191] 式"演化 GNN 参数"的机制吸收节点集随版本的增删（结构生死）；时间粒度选择参考 [2311.12255]。
+* **形态 A — 显式图查询 DSL（对应 RQ2）。** 不发明新查询语言，而是把 Form A 定位为**架在版本化 LPG 之上的"时间 + agentic" Datalog 风格派生层**，承袭 CodeQL QL [CodeQL] / CPGQL [CPG] / Glean Angle [Glean]（及 Doop [Doop] 的声明式程序分析）的查询语义与工具链，仅追加时间算子（`valid_at`、沿 `EVOLVES_TO` 回溯）与 agentic 算子（沿 `READ`/`EDIT` 回溯）。如此 Agent 可执行形如 `Query(Target=AuthModule, History=Past_3_BugFixes, Agent_Trace=Failed_Attempts)` 的检索，精准拉取"结构邻居 / 历史修改者 / 过去踩过的坑"，序列化为显式 Prompt。该路线**白送可解释性、即时基线与现成查询语义**，且与选择性 / 图检索（Repoformer [2403.10059]、GraphCoder [2406.07003]、RepoGraph [2410.14684]）一脉相承。
 * **形态 B — 隐式 Graph-VAE soft-prompt（对应 RQ2）。** 训练图变分自编码器（VGAE [1611.07308] / GraphMAE [2205.10803] 系）把整个张量压缩为低维潜变量，经 Prefix-Tuning [2101.00190] / ICAE [2307.06945] 风格的桥接注入冻结的 Coding Agent，绕过 Token 窗口物理限制。
 
 ### 3.3 下游任务与实验设计（对应 RQ3）
@@ -142,4 +165,18 @@
 
 ### References (参考文献)
 
-完整的 126 篇文献综述、分类与逐篇贡献标注见 **`paper/summary.md`** 与 **`paper/index.csv`**；本文 `[arxiv_id]` 形式的引用可在该 CSV 中按 `arxiv_id` 列检索到题录与 PDF。
+完整的 126 篇 arXiv 文献综述、分类与逐篇贡献标注见 **`paper/summary.md`** 与 **`paper/index.csv`**；本文 `[arxiv_id]` 形式的引用可在该 CSV 中按 `arxiv_id` 列检索到题录与 PDF（本次新增的 4 篇 arXiv——[2507.16585]、[2211.01224]、[2210.08316]、[1901.05392]——已一并收录）。
+
+**代码智能 / 静态分析基础设施（非 arXiv，方括号短键）。** 下列工具 / 规范 / 论文以短键引用，题录亦收入 `paper/index.csv`（`arxiv_id` 列存短键、`url` 列存 DOI / 官网、无 PDF）：
+
+| 短键 | 题录 |
+|---|---|
+| [CPG] | Yamaguchi et al., *Modeling and Discovering Vulnerabilities with Code Property Graphs*, IEEE S&P 2014, doi:10.1109/SP.2014.44（实现工具 Joern, joern.io） |
+| [CodeQL] | Avgustinov et al., *QL: Object-oriented Queries on Relational Data*, ECOOP 2016, doi:10.4230/LIPIcs.ECOOP.2016.2 |
+| [Kythe] | Google, *Kythe* — 语言无关的代码索引 / 交叉引用生态, kythe.io |
+| [Glean] | Meta, *Glean* — 源码事实库 + Angle 查询语言, glean.software |
+| [SCIP] | Sourcegraph, *SCIP Code Intelligence Protocol*（LSIF 的后继）, scip-code.org |
+| [tree-sitter] | Brunsfeld et al., *Tree-sitter* — 增量多语言解析系统, 2018, tree-sitter.github.io |
+| [GumTree] | Falleri et al., *Fine-grained and Accurate Source Code Differencing*, ASE 2014, doi:10.1145/2642937.2642982 |
+| [Doop] | Bravenboer & Smaragdakis, *Strictly Declarative Specification of Sophisticated Points-to Analyses*, OOPSLA 2009, doi:10.1145/1640089.1640108 |
+| [ChangeProp-TG] | Germanos et al., *To change or not to change? … Temporal Graphs and GNNs*, Information and Software Technology 166 (2024), doi:10.1016/j.infsof.2023.107368 |
